@@ -2,80 +2,69 @@ package main
 
 import (
 	"flag"
-	"github.com/astaxie/beego"
-	"github.com/cnlh/nps/server"
-	"github.com/cnlh/nps/utils"
-	_ "github.com/cnlh/nps/web/routers"
+	"log"
 	"os"
+	"path/filepath"
+
+	"github.com/astaxie/beego"
+	"github.com/astaxie/beego/logs"
+	"github.com/cnlh/nps/lib/common"
+	"github.com/cnlh/nps/lib/crypt"
+	"github.com/cnlh/nps/lib/daemon"
+	"github.com/cnlh/nps/lib/file"
+	"github.com/cnlh/nps/lib/install"
+	"github.com/cnlh/nps/lib/version"
+	"github.com/cnlh/nps/server"
+	"github.com/cnlh/nps/server/connection"
+	"github.com/cnlh/nps/server/test"
+	"github.com/cnlh/nps/server/tool"
+	_ "github.com/cnlh/nps/web/routers"
 )
 
-const VERSION = "v0.0.13"
-
 var (
-	TcpPort      = flag.Int("tcpport", 0, "客户端与服务端通信端口")
-	httpPort     = flag.Int("httpport", 8024, "对外监听的端口")
-	rpMode       = flag.String("mode", "webServer", "启动模式")
-	tunnelTarget = flag.String("target", "127.0.0.1:80", "远程目标")
-	VerifyKey    = flag.String("vkey", "", "验证密钥")
-	u            = flag.String("u", "", "验证用户名(socks5和web)")
-	p            = flag.String("p", "", "验证密码(socks5和web)")
-	compress     = flag.String("compress", "", "数据压缩方式（snappy）")
-	crypt        = flag.String("crypt", "false", "是否加密(true|false)")
-	logType      = flag.String("log", "stdout", "日志输出方式（stdout|file）")
+	level   string
+	logType = flag.String("log", "stdout", "Log output mode（stdout|file）")
 )
 
 func main() {
 	flag.Parse()
-	var test bool
-	if len(os.Args) > 1 && os.Args[1] == "test" {
-		test = true
+	beego.LoadAppConfig("ini", filepath.Join(common.GetRunPath(), "conf", "nps.conf"))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "test":
+			test.TestServerConfig()
+			log.Println("test ok, no error")
+			return
+		case "start", "restart", "stop", "status", "reload":
+			daemon.InitDaemon("nps", common.GetRunPath(), common.GetTmpPath())
+		case "install":
+			install.InstallNps()
+			return
+		}
 	}
-	utils.InitDaemon("server")
-	if *logType == "stdout" || test {
-		utils.InitLogFile("server", true)
+	if level = beego.AppConfig.String("log_level"); level == "" {
+		level = "7"
+	}
+	logs.Reset()
+	logs.EnableFuncCallDepth(true)
+	logs.SetLogFuncCallDepth(3)
+	if *logType == "stdout" {
+		logs.SetLogger(logs.AdapterConsole, `{"level":`+level+`,"color":true}`)
 	} else {
-		utils.InitLogFile("server", false)
+		logs.SetLogger(logs.AdapterFile, `{"level":`+level+`,"filename":"`+beego.AppConfig.String("log_path")+`","daily":false,"maxlines":100000,"color":true}`)
 	}
-	task := &utils.Tunnel{
-		TcpPort: *httpPort,
-		Mode:    *rpMode,
-		Target:  *tunnelTarget,
-		Config: &utils.Config{
-			U:        *u,
-			P:        *p,
-			Compress: *compress,
-			Crypt:    utils.GetBoolByStr(*crypt),
-		},
-		Flow:         &utils.Flow{},
-		UseClientCnf: false,
+	task := &file.Tunnel{
+		Mode: "webServer",
 	}
-	if *VerifyKey != "" {
-		c := &utils.Client{
-			Id:        0,
-			VerifyKey: *VerifyKey,
-			Addr:      "",
-			Remark:    "",
-			Status:    true,
-			IsConnect: false,
-			Cnf:       &utils.Config{},
-			Flow:      &utils.Flow{},
-		}
-		c.Cnf.CompressDecode, c.Cnf.CompressEncode = utils.GetCompressType(c.Cnf.Compress)
-		server.CsvDb.Clients[0] = c
-		task.Client = c
+	bridgePort, err := beego.AppConfig.Int("bridge_port")
+	if err != nil {
+		logs.Error("Getting bridge_port error", err)
+		os.Exit(0)
 	}
-	if *TcpPort == 0 {
-		p, err := beego.AppConfig.Int("tcpport")
-		if err == nil && *rpMode == "webServer" {
-			*TcpPort = p
-		} else {
-			*TcpPort = 8284
-		}
-	}
-	utils.Println("服务端启动，监听tcp服务端端口：", *TcpPort)
-	task.Config.CompressDecode, task.Config.CompressEncode = utils.GetCompressType(task.Config.Compress)
-	if *rpMode != "webServer" {
-		server.CsvDb.Tasks[0] = task
-	}
-	server.StartNewServer(*TcpPort, task, test)
+	logs.Info("the version of server is %s ,allow client version to be %s", version.VERSION, version.GetVersion())
+	connection.InitConnectionService()
+	crypt.InitTls(filepath.Join(common.GetRunPath(), "conf", "server.pem"), filepath.Join(common.GetRunPath(), "conf", "server.key"))
+	tool.InitAllowPort()
+	tool.StartSystemInfo()
+	server.StartNewServer(bridgePort, task, beego.AppConfig.String("bridge_type"))
 }
