@@ -1,16 +1,16 @@
 package main
 
 import (
+	"ehang.io/nps/client"
+	"ehang.io/nps/lib/common"
+	"ehang.io/nps/lib/config"
+	"ehang.io/nps/lib/file"
+	"ehang.io/nps/lib/install"
+	"ehang.io/nps/lib/version"
 	"flag"
 	"fmt"
 	"github.com/astaxie/beego/logs"
 	"github.com/ccding/go-stun/stun"
-	"github.com/cnlh/nps/client"
-	"github.com/cnlh/nps/lib/common"
-	"github.com/cnlh/nps/lib/config"
-	"github.com/cnlh/nps/lib/file"
-	"github.com/cnlh/nps/lib/install"
-	"github.com/cnlh/nps/lib/version"
 	"github.com/kardianos/service"
 	"os"
 	"runtime"
@@ -35,6 +35,31 @@ var (
 	debug        = flag.Bool("debug", true, "npc debug")
 )
 
+const systemdScript = `[Unit]
+Description={{.Description}}
+ConditionFileIsExecutable={{.Path|cmdEscape}}
+{{range $i, $dep := .Dependencies}} 
+{{$dep}} {{end}}
+[Service]
+LimitNOFILE=65536
+StartLimitInterval=5
+StartLimitBurst=10
+ExecStart={{.Path|cmdEscape}}{{range .Arguments}} {{.|cmd}}{{end}}
+{{if .ChRoot}}RootDirectory={{.ChRoot|cmd}}{{end}}
+{{if .WorkingDirectory}}WorkingDirectory={{.WorkingDirectory|cmdEscape}}{{end}}
+{{if .UserName}}User={{.UserName}}{{end}}
+{{if .ReloadSignal}}ExecReload=/bin/kill -{{.ReloadSignal}} "$MAINPID"{{end}}
+{{if .PIDFile}}PIDFile={{.PIDFile|cmd}}{{end}}
+{{if and .LogOutput .HasOutputFileSupport -}}
+StandardOutput=file:/var/log/{{.Name}}.out
+StandardError=file:/var/log/{{.Name}}.err
+{{- end}}
+Restart=always
+RestartSec=120
+[Install]
+WantedBy=multi-user.target
+`
+
 func main() {
 	flag.Parse()
 	logs.Reset()
@@ -54,8 +79,6 @@ func main() {
 
 	// init service
 	options := make(service.KeyValue)
-	options["Restart"] = "on-success"
-	options["SuccessExitStatus"] = "1 2 8 SIGKILL"
 	svcConfig := &service.Config{
 		Name:        "Npc",
 		DisplayName: "nps内网穿透客户端",
@@ -66,6 +89,7 @@ func main() {
 		svcConfig.Dependencies = []string{
 			"Requires=network.target",
 			"After=network-online.target syslog.target"}
+		svcConfig.Option["SystemdScript"] = systemdScript
 	}
 	for _, v := range os.Args[1:] {
 		switch v {
@@ -114,7 +138,7 @@ func main() {
 			}
 			err := service.Control(s, os.Args[1])
 			if err != nil {
-				logs.Error("Valid actions: %q\n", service.ControlAction, err.Error())
+				logs.Error("Valid actions: %q\n%s", service.ControlAction, err.Error())
 			}
 			return
 		}

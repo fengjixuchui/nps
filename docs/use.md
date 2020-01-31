@@ -36,13 +36,15 @@ npc-update.exe update
 
 更新完成后，执行执行`sudo npc start`或者`npc.exe start`重新运行即可完成升级
 
+如果无法更新成功，可以直接自行下载releases压缩包然后覆盖原有的npc二进制文件
+
 ## 配置文件模式
 此模式使用nps的公钥或者客户端私钥验证，各种配置在客户端完成，同时服务端web也可以进行管理
 ```
  ./npc -config=npc配置文件路径
 ```
 ## 配置文件说明
-[示例配置文件](https://github.com/cnlh/nps/tree/master/conf/npc.conf)
+[示例配置文件](https://github.com/ehang-io/nps/tree/master/conf/npc.conf)
 #### 全局配置
 ```ini
 [common]

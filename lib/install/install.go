@@ -1,11 +1,11 @@
 package install
 
 import (
+	"ehang.io/nps/lib/common"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/c4milo/unpackit"
-	"github.com/cnlh/nps/lib/common"
 	"io"
 	"io/ioutil"
 	"log"
@@ -50,7 +50,7 @@ func downloadLatest(bin string) string {
 	fmt.Println("the latest version is", version)
 	filename := runtime.GOOS + "_" + runtime.GOARCH + "_" + bin + ".tar.gz"
 	// download latest package
-	downloadUrl := fmt.Sprintf("https://github.com/cnlh/nps/releases/download/%s/%s", version, filename)
+	downloadUrl := fmt.Sprintf("https://ehang.io/nps/releases/download/%s/%s", version, filename)
 	fmt.Println("download package from ", downloadUrl)
 	resp, err := http.Get(downloadUrl)
 	if err != nil {
@@ -91,11 +91,13 @@ func copyStaticFile(srcPath, bin string) string {
 			if _, err := copyFile(filepath.Join(srcPath, bin), "/usr/local/bin/"+bin); err != nil {
 				log.Fatalln(err)
 			} else {
-				copyFile(filepath.Join(srcPath, "nps"), "/usr/local/bin/"+bin+"-update")
+				copyFile(filepath.Join(srcPath, bin), "/usr/local/bin/"+bin+"-update")
+				chMod("/usr/local/bin/"+bin+"-update", 0755)
 				binPath = "/usr/local/bin/" + bin
 			}
 		} else {
-			copyFile(filepath.Join(srcPath, "nps"), "/usr/bin/"+bin+"-update")
+			copyFile(filepath.Join(srcPath, bin), "/usr/bin/"+bin+"-update")
+			chMod("/usr/bin/"+bin+"-update", 0755)
 			binPath = "/usr/bin/" + bin
 		}
 	} else {
