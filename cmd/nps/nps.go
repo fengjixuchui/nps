@@ -1,26 +1,28 @@
 package main
 
 import (
-	"ehang.io/nps/lib/install"
-	"flag"
-	"log"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
-
-	"ehang.io/nps/lib/common"
 	"ehang.io/nps/lib/crypt"
-	"ehang.io/nps/lib/daemon"
 	"ehang.io/nps/lib/file"
+	"ehang.io/nps/lib/install"
 	"ehang.io/nps/lib/version"
 	"ehang.io/nps/server"
 	"ehang.io/nps/server/connection"
 	"ehang.io/nps/server/tool"
+	"ehang.io/nps/web/routers"
+	"flag"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+
+	"ehang.io/nps/lib/common"
+	"ehang.io/nps/lib/daemon"
 	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/logs"
 
-	"ehang.io/nps/web/routers"
 	"github.com/kardianos/service"
 )
 
@@ -28,37 +30,13 @@ var (
 	level string
 )
 
-const systemdScript = `[Unit]
-Description={{.Description}}
-ConditionFileIsExecutable={{.Path|cmdEscape}}
-{{range $i, $dep := .Dependencies}} 
-{{$dep}} {{end}}
-[Service]
-LimitNOFILE=65536
-StartLimitInterval=5
-StartLimitBurst=10
-ExecStart={{.Path|cmdEscape}}{{range .Arguments}} {{.|cmd}}{{end}}
-{{if .ChRoot}}RootDirectory={{.ChRoot|cmd}}{{end}}
-{{if .WorkingDirectory}}WorkingDirectory={{.WorkingDirectory|cmdEscape}}{{end}}
-{{if .UserName}}User={{.UserName}}{{end}}
-{{if .ReloadSignal}}ExecReload=/bin/kill -{{.ReloadSignal}} "$MAINPID"{{end}}
-{{if .PIDFile}}PIDFile={{.PIDFile|cmd}}{{end}}
-{{if and .LogOutput .HasOutputFileSupport -}}
-StandardOutput=file:/var/log/{{.Name}}.out
-StandardError=file:/var/log/{{.Name}}.err
-{{- end}}
-Restart=always
-RestartSec=120
-[Install]
-WantedBy=multi-user.target
-`
-
 func main() {
 	flag.Parse()
 	// init log
 	if err := beego.LoadAppConfig("ini", filepath.Join(common.GetRunPath(), "conf", "nps.conf")); err != nil {
 		log.Fatalln("load config file error", err.Error())
 	}
+	common.InitPProfFromFile()
 	if level = beego.AppConfig.String("log_level"); level == "" {
 		level = "7"
 	}
@@ -90,13 +68,19 @@ func main() {
 		svcConfig.Dependencies = []string{
 			"Requires=network.target",
 			"After=network-online.target syslog.target"}
-		svcConfig.Option["SystemdScript"] = systemdScript
+		svcConfig.Option["SystemdScript"] = install.SystemdScript
+		svcConfig.Option["SysvScript"] = install.SysvScript
 	}
 	prg := &nps{}
 	prg.exit = make(chan struct{})
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
-		logs.Error(err)
+		logs.Error(err, "service function disabled")
+		run()
+		// run without service
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		wg.Wait()
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] != "service" {
@@ -120,11 +104,37 @@ func main() {
 			if err != nil {
 				logs.Error("Valid actions: %q\n%s", service.ControlAction, err.Error())
 			}
+			if service.Platform() == "unix-systemv" {
+				logs.Info("unix-systemv service")
+				confPath := "/etc/init.d/" + svcConfig.Name
+				os.Symlink(confPath, "/etc/rc.d/S90"+svcConfig.Name)
+				os.Symlink(confPath, "/etc/rc.d/K02"+svcConfig.Name)
+			}
 			return
-		case "start", "restart", "stop", "uninstall":
+		case "start", "restart", "stop":
+			if service.Platform() == "unix-systemv" {
+				logs.Info("unix-systemv service")
+				cmd := exec.Command("/etc/init.d/"+svcConfig.Name, os.Args[1])
+				err := cmd.Run()
+				if err != nil {
+					logs.Error(err)
+				}
+				return
+			}
 			err := service.Control(s, os.Args[1])
 			if err != nil {
 				logs.Error("Valid actions: %q\n%s", service.ControlAction, err.Error())
+			}
+			return
+		case "uninstall":
+			err := service.Control(s, os.Args[1])
+			if err != nil {
+				logs.Error("Valid actions: %q\n%s", service.ControlAction, err.Error())
+			}
+			if service.Platform() == "unix-systemv" {
+				logs.Info("unix-systemv service")
+				os.Remove("/etc/rc.d/S90" + svcConfig.Name)
+				os.Remove("/etc/rc.d/K02" + svcConfig.Name)
 			}
 			return
 		case "update":
@@ -165,6 +175,15 @@ func (p *nps) run() error {
 			logs.Warning("nps: panic serving %v: %v\n%s", err, string(buf))
 		}
 	}()
+	run()
+	select {
+	case <-p.exit:
+		logs.Warning("stop...")
+	}
+	return nil
+}
+
+func run() {
 	routers.Init()
 	task := &file.Tunnel{
 		Mode: "webServer",
@@ -180,9 +199,4 @@ func (p *nps) run() error {
 	tool.InitAllowPort()
 	tool.StartSystemInfo()
 	go server.StartNewServer(bridgePort, task, beego.AppConfig.String("bridge_type"))
-	select {
-	case <-p.exit:
-		logs.Warning("stop...")
-	}
-	return nil
 }
