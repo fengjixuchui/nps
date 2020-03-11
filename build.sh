@@ -1,9 +1,12 @@
 #/bash/sh
-export VERSION=0.26.4
+export VERSION=0.26.5
+export GOPROXY=direct
 
-sudo apt-get install gcc-mingw-w64-i686
+sudo apt-get update
+sudo apt-get install gcc-mingw-w64-i686 gcc-multilib
 env GOOS=windows GOARCH=386 CGO_ENABLED=1 CC=i686-w64-mingw32-gcc go build -ldflags "-s -w -extldflags -static -extldflags -static" -buildmode=c-shared -o npc_sdk.dll cmd/npc/sdk.go
-tar -czvf npc_sdk.tar.gz npc_sdk.dll npc_sdk.h
+env GOOS=linux GOARCH=386 CGO_ENABLED=1 CC=gcc go build -ldflags "-s -w -extldflags -static -extldflags -static" -buildmode=c-shared -o npc_sdk.so cmd/npc/sdk.go
+tar -czvf npc_sdk.tar.gz npc_sdk.dll npc_sdk.so npc_sdk.h
 
 wget https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz
 tar -xvf upx-3.95-amd64_linux.tar.xz
@@ -163,10 +166,10 @@ sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubun
 sudo apt-get update
 sudo apt-get -y -o Dpkg::Options::="--force-confnew" install docker-ce
 docker --version
-docker run --rm -i -w /app -v $(pwd):/app -e ANDROID_HOME=/usr/local/android_sdk ffdfgdfg/fyne-cross:android /app/build.android.sh
+docker run --rm -i -w /app -v $(pwd):/app -e ANDROID_HOME=/usr/local/android_sdk -e GOPROXY=direct ffdfgdfg/fyne-cross:android /app/build.android.sh
 git clone https://github.com/cnlh/spksrc.git ~/spksrc
 mkdir ~/spksrc/nps && cp -rf ./* ~/spksrc/nps/
-docker run -itd --name spksrc --env VERSION=$VERSION  -v ~/spksrc:/spksrc synocommunity/spksrc /bin/bash
+docker run -itd --name spksrc --env VERSION=$VERSION -e GOPROXY=direct -v ~/spksrc:/spksrc synocommunity/spksrc /bin/bash
 docker exec -it spksrc /bin/bash -c 'cd /spksrc && make setup && cd /spksrc/spk/npc && make'
 cp ~/spksrc/packages/npc_noarch-all_$VERSION-1.spk ./npc_syno.spk
 
@@ -175,5 +178,5 @@ echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
 export DOCKER_CLI_EXPERIMENTAL=enabled
 docker run --rm --privileged docker/binfmt:66f9012c56a8316f9244ffd7622d7c21c1f6f28d
 docker buildx create --use --name mybuilder
-docker buildx build --tag ffdfgdfg/nps:$VERSION --tag ffdfgdfg/nps:latest --output type=image,push=true --file Dockerfile.nps --platform=linux/amd64,linux/arm64,linux/386,linux/arm .
-docker buildx build --tag ffdfgdfg/npc:$VERSION --tag ffdfgdfg/npc:latest --output type=image,push=true --file Dockerfile.npc --platform=linux/amd64,linux/arm64,linux/386,linux/arm .
+docker buildx build --tag ffdfgdfg/nps:$VERSION --tag ffdfgdfg/nps:latest --output type=image,push=true --file Dockerfile.nps --platform=linux/amd64,linux/arm64 .
+docker buildx build --tag ffdfgdfg/npc:$VERSION --tag ffdfgdfg/npc:latest --output type=image,push=true --file Dockerfile.npc --platform=linux/amd64,linux/arm64 .
